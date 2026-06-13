@@ -120,8 +120,6 @@
   </header>
   <div id="qrmodal" hidden>
     <div class="qrcard">
-      <div style="font-weight:600;margin-bottom:4px">Scan to open on your phone</div>
-      <div style="color:var(--dim);font-size:12px;margin-bottom:10px">Same wifi / local network</div>
       <div id="qrcode"></div>
       <div class="qrurl" id="qrurl"></div>
       <button id="qrclose">close</button>
@@ -148,11 +146,10 @@
       <button data-k="ctrlc">⌃C</button>
     </div>
     <div class="inputrow">
-      <textarea id="box" placeholder="Type a message — paste or drop an image to attach it. Enter to send (Shift+Enter = newline)."></textarea>
+      <textarea id="box" placeholder="message"></textarea>
       <button id="send">Send</button>
     </div>
   </footer>
-  <div class="hint">Switch between the live terminal and the transcript with the header button. Type or dictate above; paste/drop an image to attach it; use the key bar to drive TUI menus.</div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
@@ -191,7 +188,7 @@ function connect() {
   ws.binaryType = 'arraybuffer';
 
   ws.onopen = () => { dot.classList.add('up'); sendResize(); };
-  ws.onclose = () => { dot.classList.remove('up'); meta.textContent = 'disconnected — retrying…';
+  ws.onclose = () => { dot.classList.remove('up'); meta.textContent = 'reconnecting…';
                        setTimeout(connect, 1200); };
   ws.onmessage = (e) => {
     if (typeof e.data === 'string') { handleJson(JSON.parse(e.data)); }
@@ -201,14 +198,14 @@ function connect() {
 
 function handleJson(m) {
   if (m.type === 'hello') {
-    meta.textContent = `session ${m.sessionId.slice(0,8)} · ${m.workdir}`;
+    meta.textContent = '';
     setBusy(m.busy, null);
   } else if (m.type === 'transcript') {
     renderEvent(m.event);
   } else if (m.type === 'hook') {
     handleHook(m);
   } else if (m.type === 'exit') {
-    meta.textContent += ' · session ended';
+    meta.textContent = 'session ended';
     dot.classList.remove('up');
     statusEl.className = ''; statusEl.textContent = 'ended';
   }
@@ -422,6 +419,7 @@ function setView(view) {
   const tty = view === 'tty';
   leftPanel.classList.toggle('hidden', !tty);
   rightPanel.classList.toggle('hidden', tty);
+  document.getElementById('keys').style.display = tty ? '' : 'none';  // keys only drive the tty
   panelBtn.textContent = tty ? '▤ transcript' : '❯_ terminal';
   try { localStorage.setItem('cc_view', view); } catch {}
   if (tty) setTimeout(() => { fit.fit(); sendResize(); term.scrollToBottom(); }, 60);
