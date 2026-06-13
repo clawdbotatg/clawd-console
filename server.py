@@ -336,7 +336,22 @@ class ClaudeSession:
             content = (obj.get("message") or {}).get("content")
             text = content if isinstance(content, str) else _collect_text(content)
             if text:
-                return {"role": "user", "text": text}
+                # local slash-command artifacts → clean events, not raw XML tags
+                m = re.search(r"<command-name>([^<]*)</command-name>", text)
+                if m:
+                    name = m.group(1).strip()
+                    am = re.search(r"<command-args>([^<]*)</command-args>", text)
+                    args = am.group(1).strip() if am else ""
+                    return {"role": "command", "text": (name + " " + args).strip()}
+                m = re.search(r"<local-command-stdout>([\s\S]*?)</local-command-stdout>", text)
+                if m:
+                    out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", m.group(1))  # strip ANSI
+                    out = re.sub(r"<[^>]+>", "", out).strip()
+                    return {"role": "system", "text": out} if out else None
+                clean = _strip_noise(text).strip()
+                if not clean:
+                    return None
+                return {"role": "user", "text": clean}
             # tool_result blocks arrive as user messages too
             tr = _collect_tool_results(content)
             if tr:
@@ -397,6 +412,14 @@ class ClaudeSession:
                 self.proc.send_signal(signal.SIGTERM)
         except Exception:
             pass
+
+
+def _strip_noise(text):
+    """Drop harness boilerplate that shouldn't show as a user message."""
+    text = re.sub(r"<local-command-caveat>[\s\S]*?</local-command-caveat>", "", text)
+    text = re.sub(r"<system-reminder>[\s\S]*?</system-reminder>", "", text)
+    text = re.sub(r"</?command-(message|name|args)>", "", text)
+    return text
 
 
 def _collect_text(content):
