@@ -389,6 +389,21 @@ class ClaudeSession:
                           "workdir": WORKDIR,
                           "busy": self.busy,
                           "cols": COLS, "rows": ROWS})
+        self._replay_history(client)
+
+    def _replay_history(self, client, limit=150):
+        """Send recent transcript events so a fresh client's structured view
+        isn't empty — important now that mobile defaults to the transcript."""
+        path = self.transcript_path or self._find_transcript()
+        if not path:
+            return
+        try:
+            lines = open(path).read().splitlines()
+        except OSError:
+            return
+        events = [e for e in (self._slim_event(l) for l in lines) if e]
+        for ev in events[-limit:]:
+            client.send_json({"type": "transcript", "event": ev, "history": True})
 
     def remove_client(self, client):
         with self.clients_lock:
@@ -624,6 +639,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")   # always serve fresh UI
         self.end_headers()
         self.wfile.write(body)
 
