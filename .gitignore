@@ -1,0 +1,15 @@
+# runtime / local state — never commit (comments on their own lines!)
+
+# auth secret
+.clawd-console.token
+# local session id
+.clawd-console.session
+# generated; embeds the token in curl URLs
+.clawd-console.hooks.json
+# pasted/uploaded images (may contain anything)
+.clawd-console-uploads/
+
+# os / editor cruft
+.DS_Store
+__pycache__/
+*.pyc

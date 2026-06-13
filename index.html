@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>clawd-console</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+<style>
+  :root { --bg:#0c0c10; --panel:#14141b; --edge:#262633; --ink:#e6e6ee; --dim:#8a8aa0;
+          --accent:#7c5cff; --user:#1f6feb; --tool:#7a5; --err:#e5534b; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+              font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  #app { display:flex; flex-direction:column; height:100%; }
+  header { display:flex; align-items:center; gap:12px; padding:8px 14px;
+           border-bottom:1px solid var(--edge); background:var(--panel); }
+  header h1 { font-size:14px; margin:0; font-weight:600; letter-spacing:.3px; }
+  header .meta { color:var(--dim); font-size:12px; font-family:ui-monospace,Menlo,monospace; }
+  header .spacer { flex:1; }
+  #dot { width:9px; height:9px; border-radius:50%; background:var(--err); flex:0 0 auto; }
+  #dot.up { background:#3fb950; }
+  #status { font-size:12px; padding:3px 10px; border-radius:999px; border:1px solid var(--edge);
+            color:var(--dim); white-space:nowrap; }
+  #status.working { color:#f5d061; border-color:#5a4d1f; background:#1c180a; }
+  #status.idle    { color:#3fb950; border-color:#1f5a2f; background:#0c1a10; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+  #status.working { animation:pulse 1.1s ease-in-out infinite; }
+  main { flex:1; display:flex; min-height:0; }
+  .col { display:flex; flex-direction:column; min-width:0; min-height:0; }
+  #left  { flex:1.4; border-right:1px solid var(--edge); }
+  #right { flex:1; background:#0a0a0e; }
+  .col h2 { font-size:11px; text-transform:uppercase; letter-spacing:.12em; color:var(--dim);
+            margin:0; padding:8px 12px; border-bottom:1px solid var(--edge); }
+  #term { flex:1; min-height:0; padding:6px 4px 0 8px; background:#000; }
+  #feed { flex:1; min-height:0; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:10px; }
+  .msg { border:1px solid var(--edge); border-radius:10px; padding:8px 11px; max-width:100%;
+         white-space:pre-wrap; word-break:break-word; }
+  .msg .who { font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:var(--dim); margin-bottom:3px; }
+  .msg.user      { border-color:#23406e; background:#0e1830; }
+  .msg.assistant { border-color:#3a2f6b; background:#15122a; }
+  .msg.tool      { border-color:#3a4a2a; background:#141a10; font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  .msg.tool_result { border-color:#333; background:#0f0f14; color:var(--dim);
+                     font-family:ui-monospace,Menlo,monospace; font-size:12px; padding:0; }
+  .msg.tool_result details { padding:0; }
+  .msg.tool_result summary { cursor:pointer; padding:7px 11px; list-style:none;
+                             color:var(--dim); user-select:none; }
+  .msg.tool_result summary::-webkit-details-marker { display:none; }
+  .msg.tool_result summary::before { content:"▸ "; color:#555; }
+  .msg.tool_result details[open] summary::before { content:"▾ "; }
+  .msg.tool_result summary:hover { color:var(--ink); }
+  .msg.tool_result .result-body { padding:0 11px 9px; white-space:pre-wrap; word-break:break-word;
+                                  max-height:280px; overflow:auto; border-top:1px solid #222; margin-top:2px; }
+  .msg.result    { border-color:#444; background:#101016; color:var(--dim); font-size:12px; }
+  .msg .toolname { color:var(--tool); font-weight:600; }
+  footer { border-top:1px solid var(--edge); background:var(--panel); padding:10px 12px;
+           display:flex; flex-direction:column; gap:8px; }
+  .inputrow { display:flex; gap:8px; align-items:flex-end; }
+  #attachments { display:flex; flex-wrap:wrap; gap:6px; }
+  #attachments:empty { display:none; }
+  .chip { display:flex; align-items:center; gap:6px; background:#0a0a0e; border:1px solid var(--edge);
+          border-radius:8px; padding:4px 8px; font-size:12px; color:var(--ink); }
+  .chip img { width:30px; height:30px; object-fit:cover; border-radius:4px; }
+  .chip.up { color:var(--dim); font-style:italic; }
+  .chip button { background:transparent; border:0; color:var(--dim); cursor:pointer; padding:0 2px;
+                 font-weight:700; font-size:14px; }
+  .chip button:hover { color:var(--err); }
+  #box { flex:1; resize:none; min-height:38px; max-height:160px; background:#0a0a0e; color:var(--ink);
+         border:1px solid var(--edge); border-radius:8px; padding:9px 11px; font:inherit; }
+  #box:focus { outline:none; border-color:var(--accent); }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:10px 16px;
+           font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:default; }
+  .hint { color:var(--dim); font-size:11px; padding:0 12px 8px; }
+  #phoneBtn { background:transparent; border:1px solid var(--edge); color:var(--dim);
+              padding:5px 10px; font-size:12px; }
+  #phoneBtn:hover { color:var(--ink); border-color:var(--accent); }
+  #qrmodal { position:fixed; inset:0; background:rgba(0,0,0,.7); display:flex;
+             align-items:center; justify-content:center; z-index:50; }
+  #qrmodal[hidden] { display:none; }
+  .qrcard { background:var(--panel); border:1px solid var(--edge); border-radius:14px;
+            padding:22px; text-align:center; max-width:340px; }
+  #qrcode { background:#fff; padding:12px; border-radius:10px; display:inline-block; }
+  #qrcode img, #qrcode canvas { display:block; }
+  .qrurl { font-family:ui-monospace,Menlo,monospace; font-size:11px; color:var(--dim);
+           margin:12px 0; word-break:break-all; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div id="dot"></div>
+    <h1>clawd-console</h1>
+    <span class="meta" id="meta">connecting…</span>
+    <span class="spacer"></span>
+    <button id="phoneBtn" title="Open on your phone">📱 Phone</button>
+    <span id="status">—</span>
+  </header>
+  <div id="qrmodal" hidden>
+    <div class="qrcard">
+      <div style="font-weight:600;margin-bottom:4px">Scan to open on your phone</div>
+      <div style="color:var(--dim);font-size:12px;margin-bottom:10px">Same wifi / local network</div>
+      <div id="qrcode"></div>
+      <div class="qrurl" id="qrurl"></div>
+      <button id="qrclose">close</button>
+    </div>
+  </div>
+  <main>
+    <section class="col" id="left">
+      <h2>live terminal mirror — subscription session</h2>
+      <div id="term"></div>
+    </section>
+    <section class="col" id="right">
+      <h2>structured transcript</h2>
+      <div id="feed"></div>
+    </section>
+  </main>
+  <footer>
+    <div id="attachments"></div>
+    <div class="inputrow">
+      <textarea id="box" placeholder="Type a message — paste or drop an image to attach it. Enter to send (Shift+Enter = newline)."></textarea>
+      <button id="send">Send</button>
+    </div>
+  </footer>
+  <div class="hint">The terminal on the left is a faithful, live mirror — click into it to type directly. Paste/drop an image to attach it to your next message.</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs@master/qrcode.min.js"></script>
+<script>
+const term = new Terminal({
+  fontFamily: 'ui-monospace, Menlo, Monaco, "Courier New", monospace',
+  fontSize: 13, theme: { background: '#000000' }, cursorBlink: true, scrollback: 5000,
+});
+const fit = new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.open(document.getElementById('term'));
+fit.fit();
+
+const dot = document.getElementById('dot');
+const meta = document.getElementById('meta');
+const statusEl = document.getElementById('status');
+const feed = document.getElementById('feed');
+const box = document.getElementById('box');
+const sendBtn = document.getElementById('send');
+
+let ws = null, decoder = new TextDecoder();
+
+const token = new URLSearchParams(location.search).get('t') || '';
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws?t=${encodeURIComponent(token)}`);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => { dot.classList.add('up'); sendResize(); };
+  ws.onclose = () => { dot.classList.remove('up'); meta.textContent = 'disconnected — retrying…';
+                       setTimeout(connect, 1200); };
+  ws.onmessage = (e) => {
+    if (typeof e.data === 'string') { handleJson(JSON.parse(e.data)); }
+    else { term.write(new Uint8Array(e.data)); }      // raw PTY bytes
+  };
+}
+
+function handleJson(m) {
+  if (m.type === 'hello') {
+    meta.textContent = `session ${m.sessionId.slice(0,8)} · ${m.workdir}`;
+    setBusy(m.busy, null);
+  } else if (m.type === 'transcript') {
+    renderEvent(m.event);
+  } else if (m.type === 'hook') {
+    handleHook(m);
+  } else if (m.type === 'exit') {
+    meta.textContent += ' · session ended';
+    dot.classList.remove('up');
+    statusEl.className = ''; statusEl.textContent = 'ended';
+  }
+}
+
+function setBusy(busy, label) {
+  if (busy) {
+    statusEl.className = 'working';
+    statusEl.textContent = label ? `working · ${label}` : 'working…';
+  } else {
+    statusEl.className = 'idle';
+    statusEl.textContent = 'idle · ready';
+  }
+}
+
+function handleHook(m) {
+  const ev = m.event, d = m.data || {};
+  if (ev === 'UserPromptSubmit') setBusy(true, null);
+  else if (ev === 'PreToolUse')  setBusy(true, d.tool || m.tool);
+  else if (ev === 'PostToolUse') setBusy(true, d.tool || m.tool);
+  else if (ev === 'Stop')        setBusy(false, null);
+  else if (ev === 'SessionStart') setBusy(false, null);
+  else if (ev === 'SessionEnd')  { statusEl.className=''; statusEl.textContent='session ended'; }
+  else if (ev === 'Notification') setBusy(m.busy, d.message ? d.message.slice(0,40) : null);
+}
+
+function bubble(cls, who, text) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  const w = document.createElement('div'); w.className = 'who'; w.textContent = who;
+  d.appendChild(w);
+  const body = document.createElement('div');
+  body.textContent = text;
+  d.appendChild(body);
+  feed.appendChild(d);
+  feed.scrollTop = feed.scrollHeight;
+  return d;
+}
+
+// Tool results can be huge — collapse them into a dropdown, opened on demand.
+function resultBubble(text) {
+  text = String(text);
+  const d = document.createElement('div');
+  d.className = 'msg tool_result';
+  const det = document.createElement('details');
+  const sum = document.createElement('summary');
+  const oneline = text.replace(/\s+/g, ' ').trim();
+  const chars = text.length.toLocaleString();
+  sum.textContent = `result · ${chars} chars` + (oneline ? ` — ${clip(oneline, 70)}` : '');
+  det.appendChild(sum);
+  const body = document.createElement('div');
+  body.className = 'result-body';
+  body.textContent = clip(text, 8000);
+  det.appendChild(body);
+  d.appendChild(det);
+  feed.appendChild(d);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function renderEvent(ev) {
+  if (ev.role === 'user') {
+    bubble('user', 'you', ev.text);
+  } else if (ev.role === 'assistant') {
+    if (ev.text) bubble('assistant', 'claude', ev.text);
+    (ev.tools || []).forEach(t => {
+      const d = bubble('tool', 'tool', '');
+      const body = d.lastChild;
+      const nm = document.createElement('span'); nm.className = 'toolname'; nm.textContent = t.name;
+      body.appendChild(nm);
+      body.appendChild(document.createTextNode(' ' + summarizeInput(t.input)));
+    });
+  } else if (ev.role === 'tool_result') {
+    (ev.results || []).forEach(r => resultBubble(r));
+  } else if (ev.role === 'result') {
+    const u = ev.usage || {};
+    const tok = (u.input_tokens != null)
+      ? ` · in ${u.input_tokens} / out ${u.output_tokens}` : '';
+    bubble('result', 'turn complete',
+      `${ev.subtype || ''}${ev.duration_ms ? ' · ' + Math.round(ev.duration_ms/1000) + 's' : ''}${tok}`);
+  }
+}
+
+function summarizeInput(input) {
+  if (input == null) return '';
+  if (typeof input === 'string') return clip(input, 300);
+  const keys = ['command','file_path','path','pattern','prompt','description','url','query'];
+  for (const k of keys) if (input[k]) return clip(String(input[k]), 300);
+  return clip(JSON.stringify(input), 300);
+}
+function clip(s, n) { s = String(s); return s.length > n ? s.slice(0, n) + '…' : s; }
+
+// -- write channel ----------------------------------------------------------
+function sendResize() {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({type:'resize', cols: term.cols, rows: term.rows}));
+}
+// -- image attachments (paste / drop → upload → fold path into message) ------
+let attachments = [];   // {path, name, url}
+const attachEl = document.getElementById('attachments');
+
+function renderChips() {
+  attachEl.innerHTML = '';
+  attachments.forEach((a, i) => {
+    const c = document.createElement('div');
+    c.className = 'chip' + (a.pending ? ' up' : '');
+    if (a.url) { const im = document.createElement('img'); im.src = a.url; c.appendChild(im); }
+    c.appendChild(document.createTextNode(a.pending ? 'uploading…' : a.name));
+    if (!a.pending) {
+      const x = document.createElement('button'); x.textContent = '✕';
+      x.onclick = () => { attachments.splice(i, 1); renderChips(); };
+      c.appendChild(x);
+    }
+    attachEl.appendChild(c);
+  });
+}
+
+async function uploadImage(file) {
+  const slot = { pending: true, url: URL.createObjectURL(file) };
+  attachments.push(slot); renderChips();
+  try {
+    const res = await fetch(`/upload?t=${encodeURIComponent(token)}`, {
+      method: 'POST', headers: { 'Content-Type': file.type || 'image/png' }, body: file });
+    const j = await res.json();
+    slot.pending = false; slot.path = j.path; slot.name = j.name;
+  } catch (e) {
+    attachments = attachments.filter(a => a !== slot);
+  }
+  renderChips();
+}
+
+function sendMessage() {
+  const text = box.value.trim();
+  const ready = attachments.filter(a => a.path);
+  if ((!text && !ready.length) || !ws || ws.readyState !== 1) return;
+  // claude reads each path via its Read tool → sees the image
+  const full = [text, ...ready.map(a => a.path)].filter(Boolean).join(' ');
+  ws.send(JSON.stringify({ type: 'send', text: full }));
+  box.value = ''; attachments = []; renderChips();
+}
+
+box.addEventListener('paste', (e) => {
+  const items = (e.clipboardData || {}).items || [];
+  for (const it of items) {
+    if (it.type && it.type.startsWith('image/')) {
+      const f = it.getAsFile(); if (f) { e.preventDefault(); uploadImage(f); }
+    }
+  }
+});
+['dragover', 'drop'].forEach(ev => document.addEventListener(ev, (e) => {
+  if (ev === 'dragover') { e.preventDefault(); return; }
+  e.preventDefault();
+  for (const f of (e.dataTransfer?.files || [])) {
+    if (f.type.startsWith('image/')) uploadImage(f);
+  }
+}));
+sendBtn.onclick = sendMessage;
+box.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+// Raw passthrough when the user types directly in the terminal.
+term.onData(d => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({type:'input', data:d})); });
+
+window.addEventListener('resize', () => { fit.fit(); sendResize(); });
+
+// -- phone / QR --------------------------------------------------------------
+const qrmodal = document.getElementById('qrmodal');
+document.getElementById('phoneBtn').onclick = async () => {
+  let url;
+  try {
+    const cfg = await (await fetch('/config')).json();
+    url = `http://${cfg.lanIp}:${cfg.port}/?t=${encodeURIComponent(token)}`;
+  } catch { url = location.href; }
+  const holder = document.getElementById('qrcode');
+  holder.innerHTML = '';
+  new QRCode(holder, { text: url, width: 220, height: 220, correctLevel: QRCode.CorrectLevel.M });
+  document.getElementById('qrurl').textContent = url;
+  qrmodal.hidden = false;
+};
+document.getElementById('qrclose').onclick = () => { qrmodal.hidden = true; };
+qrmodal.onclick = (e) => { if (e.target === qrmodal) qrmodal.hidden = true; };
+
+connect();
+</script>
+</body>
+</html>
