@@ -56,7 +56,10 @@ RING_MAX   = int(os.environ.get("RING_MAX", str(256 * 1024)))  # replay buffer c
 # Settle gap between typing a message and pressing Enter. Claude's TUI treats a
 # fast text+CR burst as a multi-line *paste* (CR becomes a newline, not submit);
 # a pause lets the paste finalize so the CR registers as Enter. <0.6s fails here.
-SEND_SETTLE = float(os.environ.get("SEND_SETTLE", "1.5"))
+# Big/multi-line pastes need the full settle; short one-liners only need to clear
+# the 0.6s cliff, so they submit ~2x faster (SEND_SETTLE_MIN).
+SEND_SETTLE     = float(os.environ.get("SEND_SETTLE", "1.5"))
+SEND_SETTLE_MIN = float(os.environ.get("SEND_SETTLE_MIN", "0.7"))
 
 # Env vars that, when inherited, put a spawned `claude` into a nested/embedded
 # mode (e.g. it stops writing a normal session transcript). We scrub them so the
@@ -257,7 +260,10 @@ class ClaudeSession:
     def send_message(self, text: str):
         """High-level: type a message, let the paste settle, then submit (CR)."""
         self.write(text.encode("utf-8"))
-        time.sleep(SEND_SETTLE)   # see SEND_SETTLE note — avoids paste-vs-submit
+        # Short one-liners only need to clear the 0.6s burst cliff; big or
+        # multi-line pastes take longer to finalize, so keep the full settle.
+        big = len(text) > 280 or text.count("\n") >= 1
+        time.sleep(SEND_SETTLE if big else SEND_SETTLE_MIN)
         self.write(b"\r")
 
     # -- read channel: raw PTY bytes -> all clients ----------------------------
