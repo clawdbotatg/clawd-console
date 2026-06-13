@@ -1,34 +1,56 @@
 # clawd-console
 
-A web terminal **mirror + controller** for a real, **interactive** Claude Code
-session — so you can read and write to it cleanly from outside (a web UI today;
-Telegram or a controller agent next), while staying on the **Claude
-subscription** instead of metered `-p` usage.
+A web **mirror + controller** for a real, **interactive** Claude Code session.
+Drive a subscription-billed `claude` from a browser (desktop or phone) — read its
+output cleanly, type/dictate/paste-images at it, and navigate its TUI menus —
+without parsing the terminal's "weird text."
 
-![two-panel UI: live terminal mirror on the left, structured transcript on the right]
+Pure Python stdlib server + a single HTML page. No build, no dependencies
+(xterm.js and a QR lib load from a CDN).
 
 ## Why interactive (no `-p`)
 
 The existing bridges (`clawd-tg-claude`, `clawd-web-claude`) drive `claude -p
---output-format stream-json`. That's clean, but **on 2026-06-15 `-p`/headless
-usage moves to a separate metered Agent SDK credit pool** at full API rates. The
+--output-format stream-json`. Clean, but **as of 2026-06-15 `-p`/headless usage
+draws from a separate metered Agent SDK credit pool** at full API rates. The
 **interactive TUI** (`claude` with no `-p`) keeps drawing on your Max
-subscription.
+subscription — so this runs the real interactive session and mirrors it.
 
-The catch with interactive mode is that the TUI emits "weird text" — spinner
-frames, ANSI colors, cursor moves. **We never parse that.** Instead we decouple
-the channels:
+The catch with interactive mode is the TUI emits spinner frames, ANSI colors, and
+cursor moves. **We never parse that.** The channels are decoupled:
 
-| | how | clean? | billing |
-|---|---|---|---|
-| **write** | inject keystrokes into the PTY | n/a | subscription |
-| **read (visual)** | stream raw PTY bytes → **xterm.js** renders them | yes — the emulator *interprets* the ANSI for us | subscription |
-| **read (structured)** | tail the session **transcript JSONL** | yes — pure structured JSON, no ANSI | subscription |
+| | how | clean? |
+|---|---|---|
+| **write** | inject keystrokes into the PTY | n/a |
+| **read (visual)** | stream raw PTY bytes → **xterm.js** renders them | yes — the emulator *interprets* the ANSI for us (same idea as `ttyd`/`gotty`) |
+| **read (structured)** | tail the session **transcript JSONL** | yes — pure structured JSON, no ANSI |
 
-xterm.js is doing what `ttyd`/`gotty`/`wetty` do: render a real terminal in the
-browser. So the left pane *is* the terminal, live and token-by-token. The right
-pane is the same conversation as clean `user`/`assistant`/tool events a
-controller can act on.
+Everything stays on the subscription because it's the same interactive `claude`
+you'd run in a terminal.
+
+## What you get
+
+Two views, switched with the header button (one at a time):
+
+- **Terminal** — a live, faithful xterm.js mirror of the session, token-by-token.
+  Auto-scrolls to the bottom on new output. Defaults on desktop.
+  - A **key bar** (`esc ↑ ↓ ← → ⏎ ⇥ ⌃C`) sends raw escape sequences straight to
+    the PTY, so you can drive TUI menus (e.g. `/model`) from the web UI — even on
+    touch, where the terminal itself is read-only.
+- **Transcript** — the same conversation as clean, structured bubbles parsed from
+  the session JSONL: `user`/`assistant` (markdown-rendered), tool calls,
+  collapsible tool results, slash-command chips, and system notes. History is
+  replayed on connect so it's never empty. Defaults on mobile (native scrolling,
+  no xterm touch quirks).
+
+Shared across both:
+
+- **Message box** — type or dictate; Enter sends. Mobile dictation/paste/image
+  handling is native because it's a real `<textarea>`.
+- **Image paste/drop** — uploads to the workdir; the path is folded into your
+  message and claude `Read`s it (vision works by file path).
+- **Status pill** — `working…` / `idle · ready`, driven by Stop/tool hooks.
+- **📱 Phone** — a QR to open the same UI on your phone over the LAN.
 
 ## Run
 
@@ -37,123 +59,114 @@ python3 server.py
 # open the tokenized URL it prints, e.g. http://127.0.0.1:7900/?t=<token>
 ```
 
-Pure Python stdlib — no dependencies, no install. xterm.js + a QR lib load from a
-CDN. A **token** is required on the WebSocket (and `/hook`) — printed at startup,
-persisted in `.clawd-console.token`, or set `CONSOLE_TOKEN`. The server binds
-`0.0.0.0` by default so it's reachable on your LAN; the token is the only thing
-gating command execution, and the session runs bypass-permissions — so **don't
-expose this beyond a trusted network.**
+Requires the `claude` CLI authenticated with a Claude subscription (OAuth, not an
+API key). Python 3, stdlib only.
+
+A **token** gates the WebSocket and `/hook` — printed at startup, persisted in
+`.clawd-console.token`, or set via `CONSOLE_TOKEN`. The server binds `0.0.0.0` so
+it's reachable on your LAN; the token is the only thing gating command execution
+and the session runs with bypass-permissions — **don't expose it beyond a trusted
+network.**
 
 Env knobs: `PORT` (7900), `BIND` (0.0.0.0), `WORKDIR` (cwd — where claude runs),
 `CLAUDE_BIN`, `COLS`/`ROWS` (120×34), `SEND_SETTLE` (1.5), `CONSOLE_TOKEN`.
 
 ### Phone / LAN
 
-Click **📱 Phone** in the header → a QR of `http://<lan-ip>:<port>/?t=<token>`.
-Scan it on a phone on the same network and you get the same live interface. (Both
-clients drive the one PTY; for a TUI the terminal size is shared, so phone +
-desktop will share a fixed width — fine for a prototype.)
+Tap **📱 Phone** → a QR of `http://<lan-ip>:<port>/?t=<token>`. Scan it on a phone
+on the same network for the same live session. (Both clients drive the one PTY and
+share its terminal size — fine for a prototype.)
 
 ### Run as a daemon (survives closing the terminal)
 
 ```bash
-./daemon.sh install [WORKDIR]   # launchd LaunchAgent: RunAtLoad + KeepAlive
+./daemon.sh install [WORKDIR]      # launchd LaunchAgent: RunAtLoad + KeepAlive
 ./daemon.sh status | logs | restart | uninstall
 ```
 
-The server pins `--session-id` and saves it to `.clawd-console.session`; on every
-(re)start it re-attaches to that session with `--resume`, so the conversation
-survives crashes (KeepAlive resurrects it), closing the terminal (it's detached),
-and reboot (RunAtLoad). Verified: kill the server → launchd restarts it → same
-session, context intact. (A turn that was mid-flight when killed is lost; context
-up to the last saved step is restored.)
+The session id is pinned and saved to `.clawd-console.session`; on every (re)start
+the server re-attaches with `--resume`, so the conversation survives crashes
+(KeepAlive resurrects it), closing the terminal (it's detached), and reboot
+(RunAtLoad). A turn that was mid-flight when killed is lost; context up to the last
+saved step is restored.
 
 ## Architecture
 
 ```
-Browser (index.html)                      server.py (stdlib)
-┌──────────────────────────┐              ┌──────────────────────────────────┐
-│ xterm.js  ◄──────────────┼─ WS binary ──┤ PTY master ◄─► claude (no -p,     │
-│  (live mirror)           │              │              --session-id <uuid>) │
-│ input box + Send ────────┼─ WS json ───►│  → keystrokes / text+CR           │
-│ structured panel ◄───────┼─ WS json ────┤ tail <uuid>.jsonl → slim events   │
-└──────────────────────────┘              │ + serve index.html, /config       │
-                                          └──────────────────────────────────┘
+Browser (index.html)                         server.py (stdlib)
+┌───────────────────────────┐                ┌──────────────────────────────────┐
+│ terminal view (xterm.js) ◄─┼── WS binary ───┤ PTY master ◄─► claude (no -p,     │
+│ key bar ───────────────────┼── WS json ────►│              --session-id <uuid>) │
+│ transcript view (bubbles)◄─┼── WS json ─────┤ tail <uuid>.jsonl → slim events   │
+│ message box / image paste ─┼── WS / POST ──►│ /upload → file in workdir         │
+└───────────────────────────┘                │ hooks → POST /hook → turn signal  │
+                                              │ serve index.html, /config         │
+                                              └──────────────────────────────────┘
 ```
+
+One WebSocket carries everything: **binary** frames are raw PTY bytes (→ xterm),
+**text** frames are JSON (control in, structured/hook events out).
+
+### Files
 
 - **`server.py`** — spawns one interactive `claude` in a PTY (`pty.openpty` +
   `subprocess.Popen` with `setsid`+`TIOCSCTTY`), bridges it to N browser clients
-  over a single hand-rolled WebSocket (binary frames = PTY bytes, text frames =
-  JSON control/events), and tails the transcript JSONL for structured events.
-- **`index.html`** — xterm.js terminal bound to the PTY stream, a message box
-  that sends a high-level "type + Enter", and a structured-event side panel.
-- **`smoke_test.py`** — headless WebSocket client that sends a message and
-  asserts both channels (PTY stream + structured events + on-disk transcript).
+  over a hand-rolled WebSocket, tails the transcript JSONL into slim structured
+  events, serves the page, handles `/hook` and `/upload`, and injects the hooks
+  config via `claude --settings`.
+- **`index.html`** — the whole UI: view switcher, xterm terminal, key bar,
+  transcript renderer (safe markdown + command/system parsing), message box,
+  image paste, QR.
+- **`daemon.sh`** — launchd install/uninstall/status/logs/restart.
+- **`smoke_test.py`** — headless WebSocket client; asserts both channels (PTY
+  stream + structured events + on-disk transcript).
 
-## Two non-obvious things this prototype figured out
+### Hooks → turn-boundary signal
 
-Both were dead ends until found, and both are baked into `server.py`:
+The interactive transcript has no "turn done" marker, so the server injects a
+hooks config at launch via `claude --settings <generated-file>` (self-contained;
+never touches `~/.claude`). Each hook `curl`s its stdin JSON to `/hook`, which
+updates state and broadcasts a `hook` WS event. Verified firing order on
+v2.1.177: `SessionStart → UserPromptSubmit → PreToolUse → PostToolUse → Stop →
+SessionEnd`. **Stop** carries `last_assistant_message` and drives the working→idle
+pill; **UserPromptSubmit** carries the prompt; **Pre/PostToolUse** carry tool name
++ response.
 
-1. **Scrub the nested-claude env vars.** If the server is launched from *inside*
-   another Claude Code session, the child inherits `CLAUDECODE`,
-   `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, etc. and runs in an
-   embedded mode that **doesn't write a normal session transcript** (and changes
-   input handling). `SCRUB_ENV` strips them so the child is a pristine top-level
-   session. (We also drop `ANTHROPIC_API_KEY` so it uses subscription OAuth.)
+## Two non-obvious things this figured out
+
+Both were dead ends until found; both are baked into `server.py`:
+
+1. **Scrub nested-claude env vars.** If the server runs from *inside* another
+   Claude Code session, the child inherits `CLAUDECODE`,
+   `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, etc. and goes into an
+   embedded mode that **doesn't write a normal transcript** (and changes input
+   handling). `SCRUB_ENV` strips them — and `ANTHROPIC_API_KEY`, so it uses the
+   subscription.
 2. **Settle before Enter.** Claude's TUI treats a fast `text`+`\r` burst as a
-   multi-line **paste** — the `\r` becomes a newline, not a submit. A ~1.5s pause
-   (`SEND_SETTLE`) between typing and the carriage return makes the `\r` register
-   as a discrete Enter. Sub-0.6s reliably fails.
+   multi-line *paste*, so the `\r` becomes a newline, not a submit. A ~1.5s pause
+   (`SEND_SETTLE`) makes the `\r` register as a discrete Enter. Sub-0.6s fails.
 
 ## Verify
 
 ```bash
 python3 server.py &
-python3 smoke_test.py        # asserts user+assistant events and a transcript file
+python3 smoke_test.py     # sends a message; asserts user+assistant events + transcript file
 ```
 
-Or open the page, type a message, and watch it appear in both panes. Run
-`/status` in the mirror to confirm it's drawing on the subscription. The session
-lives server-side, so refreshing the browser re-attaches to the running session
-(the replay buffer repaints the current screen).
+Or open the page, send a message, and watch it in both views. Run `/status` in the
+terminal to confirm it's on the subscription.
 
-## Hooks → turn-boundary signal
+## Notes / gotchas
 
-The interactive transcript has no "turn done" marker, so the server injects a
-hooks config at launch via `claude --settings <generated-file>` (self-contained;
-never touches `~/.claude`). Each hook `curl`s its stdin JSON to the server's
-`/hook` endpoint, which updates state and broadcasts a `hook` WS event. Verified
-firing order in v2.1.177:
+- **Stale-cache on `127.0.0.1`** — if a different app previously ran on this port,
+  Chrome may serve its cached page. Hard-refresh once (Cmd+Shift+R) or use the LAN
+  URL. clawd-console sends `Cache-Control: no-store` so it never goes stale itself.
+- **Runtime/secret files are gitignored** — `.clawd-console.token`,
+  `.clawd-console.session`, `.clawd-console.hooks.json` (embeds the token), and
+  `.clawd-console-uploads/` (pasted images).
 
-```
-SessionStart → UserPromptSubmit → PreToolUse → PostToolUse → Stop → SessionEnd
-```
+## Next ideas
 
-Most useful for a controller:
-- **Stop** — turn complete; payload has `stop_hook_active` (loop guard) and
-  `last_assistant_message` (the final reply). Drives the working→idle state.
-- **UserPromptSubmit** — turn started; includes the `prompt` text.
-- **Pre/PostToolUse** — tool activity; `tool_name`, `tool_input`, `tool_response`.
-- **SessionStart/SessionEnd** — lifecycle (`source`, `reason`, `model`) for
-  respawn detection.
-
-The UI shows a working/idle status pill driven by these.
-
-## Image paste
-
-Paste or drop an image into the message box → it uploads to `/upload` and lands
-in `.clawd-console-uploads/` in the workdir; on send, its absolute path is folded
-into your message. Interactive claude `Read`s the path and sees the image (vision
-works by file path — verified: a crimson PNG came back as "Red"). Pasting from a
-phone works too (mobile keyboards expose image paste / the share sheet).
-
-## Status / next
-
-Working & verified: PTY mirror, send box, structured channel, collapsible
-results, hooks turn-signal, token auth, LAN bind + QR-to-phone, session resume
-across restarts, the launchd daemon (survives crash/terminal-close/reboot), and
-image paste.
-
-Next ideas: a Telegram front-end on the same controller core; per-client terminal
-sizing instead of one shared PTY size; vendoring the CDN assets for offline use;
-periodic cleanup of `.clawd-console-uploads/`.
+A Telegram front-end on the same controller core; per-client terminal sizing
+instead of one shared PTY size; vendoring the CDN assets for offline use; periodic
+cleanup of `.clawd-console-uploads/`.
