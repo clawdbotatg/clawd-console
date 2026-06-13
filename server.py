@@ -20,8 +20,8 @@ the hand-rolled RFC 6455 WebSocket framing from clawd-web-claude/server.py.
 
 Run:
   python3 server.py
-  PORT=7900 WORKDIR=/some/dir CLAUDE_BIN=claude python3 server.py
-Then open http://127.0.0.1:7900
+  PORT=7878 WORKDIR=/some/dir CLAUDE_BIN=claude python3 server.py
+Then open http://127.0.0.1:7878
 """
 
 import base64
@@ -46,7 +46,7 @@ from pathlib import Path
 from socketserver import ThreadingMixIn, TCPServer
 
 # ── config ──────────────────────────────────────────────────────────────────
-PORT       = int(os.environ.get("PORT", "7900"))
+PORT       = int(os.environ.get("PORT", "7878"))
 BIND       = os.environ.get("BIND", "0.0.0.0")   # 0.0.0.0 = reachable on the LAN
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 WORKDIR    = os.path.abspath(os.environ.get("WORKDIR", os.getcwd()))
@@ -129,6 +129,7 @@ class ClaudeSession:
         self.clients_lock = threading.Lock()
 
         self.transcript_path = None
+        self._live_transcript = None             # live path from hooks; may rotate on compaction
         self.busy = False                        # working (turn in flight) vs idle
         self.last_tool = None
         self.settings_path = None
@@ -212,6 +213,12 @@ class ClaudeSession:
         """Handle one hook callback (from claude via /hook) → update state +
         broadcast a slim event. This is the clean turn-boundary signal."""
         ev = obj.get("hook_event_name", "?")
+        # Claude rotates its transcript file on compaction/resume. Main-session
+        # lifecycle hooks report the live transcript_path + session_id, so follow
+        # them — otherwise the tail strands on the pre-rotation file and the
+        # transcript view silently freezes. (Subagents use SubagentStop, not these.)
+        if ev in ("UserPromptSubmit", "Stop", "SessionStart"):
+            self._follow_session(obj)
         data = {}
         if ev == "UserPromptSubmit":
             self.busy = True
@@ -297,36 +304,61 @@ class ClaudeSession:
             f"~/.claude/projects/*/{self.session_id}.jsonl"))
         return hits[0] if hits else None
 
+    def _follow_session(self, obj):
+        """Track the live transcript file + session id from a hook payload. A
+        compaction (or resume) rotates claude's session file mid-run; following
+        it keeps the tail on the live file and makes a daemon restart resume the
+        current session instead of a stale pre-rotation one."""
+        tpath = obj.get("transcript_path")
+        if tpath:
+            self._live_transcript = os.path.expanduser(tpath)
+        sid = obj.get("session_id")
+        if sid and sid != self.session_id:
+            print(f"[session] rotated {self.session_id} -> {sid}", flush=True)
+            self.session_id = sid
+            try:
+                SESSION_FILE.write_text(sid)         # so the next restart resumes this one
+            except OSError:
+                pass
+
     def _tail_transcript(self):
-        # Wait (indefinitely, while the session lives) for the file to appear;
-        # claude creates it on the first turn, which may be long after launch.
-        path = None
-        while self.alive:
-            path = self._find_transcript()
-            if path:
-                break
-            time.sleep(0.25)
-        if not path:
-            return
-        self.transcript_path = path
-        print(f"[transcript] tailing {path}", flush=True)
-        with open(path, "r") as f:
-            buf = ""
-            while True:
-                line = f.readline()
-                if not line:
-                    if not self.alive:
-                        # drain anything left, then stop
-                        pass
-                    time.sleep(0.2)
-                    continue
-                buf += line
-                if not buf.endswith("\n"):
-                    continue                     # partial line; wait for the rest
-                raw, buf = buf, ""
-                ev = self._slim_event(raw.strip())
-                if ev:
-                    self._broadcast_json({"type": "transcript", "event": ev})
+        # Wait (indefinitely, while the session lives) for a file to tail; claude
+        # creates it on the first turn, which may be long after launch.
+        target = None
+        while self.alive and not target:
+            target = self._live_transcript or self._find_transcript()
+            if not target:
+                time.sleep(0.25)
+        # Outer loop reopens whichever file is current: when a compaction/resume
+        # rotates the session, _follow_session repoints _live_transcript and we
+        # switch, streaming the new file from the top so the client catches up
+        # across the rotation boundary.
+        while self.alive and target:
+            self.transcript_path = target
+            print(f"[transcript] tailing {target}", flush=True)
+            try:
+                f = open(target, "r")
+            except OSError:
+                time.sleep(0.25)
+                target = self._live_transcript or target
+                continue
+            with f:
+                buf = ""
+                while self.alive:
+                    if self._live_transcript and self._live_transcript != target:
+                        target = self._live_transcript       # rotated → reopen new file
+                        break
+                    line = f.readline()
+                    if not line:
+                        time.sleep(0.2)
+                        continue
+                    buf += line
+                    if not buf.endswith("\n"):
+                        continue                     # partial line; wait for the rest
+                    raw, buf = buf, ""
+                    ev = self._slim_event(raw.strip())
+                    if ev:
+                        self._broadcast_json({"type": "transcript", "event": ev})
 
     def _slim_event(self, line: str):
         """Reduce a raw transcript line to the bits a controller cares about.

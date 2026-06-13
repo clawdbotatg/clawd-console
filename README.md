@@ -56,7 +56,7 @@ Shared across both:
 
 ```bash
 python3 server.py
-# open the tokenized URL it prints, e.g. http://127.0.0.1:7900/?t=<token>
+# open the tokenized URL it prints, e.g. http://127.0.0.1:7878/?t=<token>
 ```
 
 Requires the `claude` CLI authenticated with a Claude subscription (OAuth, not an
@@ -68,7 +68,7 @@ it's reachable on your LAN; the token is the only thing gating command execution
 and the session runs with bypass-permissions — **don't expose it beyond a trusted
 network.**
 
-Env knobs: `PORT` (7900), `BIND` (0.0.0.0), `WORKDIR` (cwd — where claude runs),
+Env knobs: `PORT` (7878), `BIND` (0.0.0.0), `WORKDIR` (cwd — where claude runs),
 `CLAUDE_BIN`, `COLS`/`ROWS` (120×34), `SEND_SETTLE` (1.5), `CONSOLE_TOKEN`.
 
 ### Phone / LAN

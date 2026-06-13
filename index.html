@@ -534,6 +534,40 @@ function restoreViewAfterQuestion() {
   setView(v);
 }
 
+// -- depth navigation: views are an ordered stack, shallow → deep. Swipe right
+// climbs out (toward the menu); swipe left dives in (toward the tty), matching
+// the iOS back-gesture feel. Today there are two rungs; when the menu screen
+// lands, add it at the shallow end here — `unshift('menu')` — and teach setView
+// to show it. The swipe wiring below keys off this array and needs no changes.
+const LEVELS = ['transcript', 'tty'];
+function stepLevel(dir) {
+  const i = LEVELS.indexOf(currentView());
+  if (i === -1) return;
+  const next = LEVELS[Math.min(LEVELS.length - 1, Math.max(0, i + dir))];
+  if (next !== currentView()) setView(next);
+}
+const goDeeper    = () => stepLevel(+1);   // swipe left
+const goShallower = () => stepLevel(-1);   // swipe right
+
+// Horizontal swipe on the stage switches depth. Listen in the capture phase so
+// xterm (which handles its own touches on the tty view) can't swallow it.
+// Vertical motion is left untouched so the transcript scrolls natively.
+const stage = document.querySelector('main');
+let swX = 0, swY = 0, swT = 0, swOn = false;
+stage.addEventListener('touchstart', (e) => {
+  swOn = e.touches.length === 1;
+  if (!swOn) return;
+  const t = e.touches[0]; swX = t.clientX; swY = t.clientY; swT = Date.now();
+}, { capture: true, passive: true });
+stage.addEventListener('touchend', (e) => {
+  if (!swOn) return; swOn = false;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - swX, dy = t.clientY - swY;
+  if (Date.now() - swT > 800) return;                       // too slow for a flick
+  if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.8) return;  // not a clean horizontal swipe
+  if (dx < 0) goDeeper(); else goShallower();
+}, { capture: true, passive: true });
+
 window.addEventListener('resize', () => { fit.fit(); sendResize(); term.scrollToBottom(); });
 
 // -- phone / QR --------------------------------------------------------------

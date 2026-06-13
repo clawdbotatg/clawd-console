@@ -3,7 +3,7 @@
 Robust frame reader: select+recv into a buffer, parse frames out of it."""
 import socket, base64, os, struct, json, time, re, glob, pathlib
 
-HOST, PORT = "127.0.0.1", 7900
+HOST, PORT = "127.0.0.1", 7878
 TOKEN = (os.environ.get("CONSOLE_TOKEN")
          or (pathlib.Path(__file__).resolve().parent / ".clawd-console.token").read_text().strip())
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|[\x00-\x08\x0b-\x1f\x7f]")

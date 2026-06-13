@@ -16,7 +16,7 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG="$HOME/Library/Logs/clawd-console.log"
 PY="$(command -v python3)"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude)}"   # absolute path — launchd has a bare PATH
-PORT="${PORT:-7900}"
+PORT="${PORT:-7878}"
 BIND="${BIND:-0.0.0.0}"
 DOMAIN="gui/$(id -u)"
 
